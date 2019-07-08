@@ -1,0 +1,6 @@
+app_id : 1074300
+app_key : 736b7a80ec89c2ca91e8e2283ef3a7473de2c258866659d85a24622ad0d9698f
+device : /dev/ttyUSB1
+baudrate : 230400
+
+//此文件作为备份，请在Release中修改UserConfig.txt

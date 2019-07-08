@@ -1,0 +1,7 @@
+APP Information
+SDK Type        Onboard SDK
+APP Name        IARC_NUAA
+APP ID          1074300
+APP Key         736b7a80ec89c2ca91e8e2283ef3a7473de2c258866659d85a24622ad0d9698f
+Category        Motion tracking
+Description     IARC_NUAA
