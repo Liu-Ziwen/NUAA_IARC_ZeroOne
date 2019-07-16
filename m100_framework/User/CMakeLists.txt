@@ -21,7 +21,7 @@
 # *
 
 cmake_minimum_required(VERSION 2.8)
-project(djiosdk-flightcontrol-sample)
+project(nuaa_iarc)
 
 set(ONBOARDSDK_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../Onboard-SDK-3.8/osdk-core")
 set(ONBOARDSDK_COMMON "${CMAKE_CURRENT_SOURCE_DIR}/../Onboard-SDK-3.8/sample/linux/common")

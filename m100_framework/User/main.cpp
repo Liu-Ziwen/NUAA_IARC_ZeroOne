@@ -33,14 +33,23 @@
  */
 
 #include <iostream>
-#include "flight_control_sample.hpp"
-
+#include "main.hpp"
 
 using namespace DJI::OSDK;
 using namespace DJI::OSDK::Telemetry;
-using namespace std;
 
-#define VOICE_CMD_SIZE 5 //语音指令缓冲区大小
+#define PERM  S_IRUSR|S_IWUSR|IPC_CREAT
+
+uint8_t loop_timer_400hz = 0;
+uint8_t loop_timer_200hz = 0;
+uint8_t loop_timer_100hz = 0;
+uint8_t loop_timer_50hz = 0;
+uint8_t loop_timer_10hz = 0;
+uint8_t loop_timer_5hz = 0;
+uint8_t loop_timer_2hz = 0;
+uint16_t loop_timer_1hz = 0;
+long timer_2p5ms = 0;
+
 
 /*! main
  *
@@ -49,15 +58,12 @@ int
 main(int argc, char** argv)
 {
   // Initialize variables
+  int shmid;    //共享内存的ID
+  uint8_t *p_addr, *c_addr; //父进程和子进程的共享内存变量
+
   int functionTimeout = 1;
 
-  // 定义语音模块串口号及接收变量
-  const char* dev = (const char*) "/dev/ttyUSB2";
-  uint8_t serial_read_buff[512];
-  uint8_t voice_command_buff[VOICE_CMD_SIZE];
-  uint8_t byte_count = 0;
-
-  // Setup OSDK.
+  // Setup OSDK. // m100 Onboard_SDK 识别飞机型号及串口型号等初始化
   LinuxSetup linuxEnvironment(argc, argv);
   Vehicle*   vehicle = linuxEnvironment.getVehicle();
   if (vehicle == NULL)
@@ -69,168 +75,136 @@ main(int argc, char** argv)
   // Obtain Control Authority
   vehicle->obtainCtrlAuthority(functionTimeout);
 
-  // 初始化语音模块串口
-  LinuxSerialDevice dji_osdk_serial_device(dev,9600);
-  dji_osdk_serial_device.init();
-  if(dji_osdk_serial_device.getDeviceStatus() == false)
-    return -1;
+  // Setup Voice Model // 初始化语音模块
+  voice_model_init();
 
-  // 循环接收语音指令
-  while (1)
+
+  // 申请一段共享内存 share memory 用于两个线程之间的交互
+  shmid = shmget(IPC_PRIVATE, 1024, PERM);
+  if(shmid == -1)
   {
+    std::cout << "Create Share Memory Error: " << strerror(errno) << std::endl;
+    exit(1);
+  }
+
+  // fork函数调用测试
+  pid_t result;
+  result = fork();
+  if(-1 == result)      //返回值为-1则出错
+    std::cout << "fork error! \n";
+
+  else if(0 == result)  //返回值为0则为子进程(循环判断到来的指令)
+  {
+    c_addr = (uint8_t*)shmat(shmid, 0, 0);
+    *c_addr = (uint8_t)0x08;
+    uint8_t i=0;
+    std::cout << "child process! result = " << result << ", pid = " << getpid() << std::endl;
+    std::cout << (int)*c_addr << " | " << (int*)c_addr << std::endl;
     
-    byte_count = dji_osdk_serial_device.readall(serial_read_buff, 512);
-
-    if(byte_count == VOICE_CMD_SIZE)
+    while(1)
     {
-      uint8_t j=0;
-      if(serial_read_buff[0]==0xFA && serial_read_buff[1]==0xFB)
+      voice_cmd_read_anl();
+
+      if(voice_cmd_buff[2]==0x01 && voice_cmd_buff[3]==0x01)
+        *c_addr = 0x01;
+      if(voice_cmd_buff[2]==0x01 && voice_cmd_buff[3]==0x02)
+        *c_addr = 0x02;
+      
+
+
+      if(micros() - timer_2p5ms >= 2500)
       {
-        for(j=0;j<VOICE_CMD_SIZE;j++)
-        {
-          voice_command_buff[j] = serial_read_buff[j];
-        }
+        timer_2p5ms = micros();
+        loop_timer_400hz++;
+        loop_timer_200hz++;
+        loop_timer_100hz++;
+        loop_timer_50hz++;
+        loop_timer_10hz++;
+        loop_timer_5hz++;
+        loop_timer_2hz++;
+        loop_timer_1hz++;
+      }
 
-        //校验位计算
-        voice_command_buff[4] = voice_command_buff[2] + voice_command_buff[3];
+      if(loop_timer_400hz >= 1)
+      {
+        loop_timer_400hz = 0;
+      }
 
-        //若校验不通过则清空缓冲区
-        if(voice_command_buff[4] != serial_read_buff[4])
+      if(loop_timer_200hz >= 2)
+      {
+        loop_timer_200hz = 0;
+      }
+
+      if(loop_timer_100hz >= 4)
+      {
+        loop_timer_100hz = 0;
+      }
+
+      if(loop_timer_50hz >= 8)
+      {
+        loop_timer_50hz = 0;
+      }
+
+      if(loop_timer_10hz >= 40)
+      {
+        loop_timer_10hz = 0;
+      }
+
+      if(loop_timer_5hz >= 80)
+      {
+        loop_timer_5hz = 0;
+      }
+
+      if(loop_timer_2hz >= 200)
+      {
+        loop_timer_2hz = 0;
+      }
+
+      if(loop_timer_1hz >= 400)
+      {
+        loop_timer_1hz = 0;
+        static float count_1hz = 1;
+        std::cout << "child process : " << count_1hz << std::endl;
+        if(count_1hz++ >= 4 && *c_addr == 0x08)
         {
-          for(j=0;j<VOICE_CMD_SIZE;j++)
-          {
-            voice_command_buff[j] = 0;
-          }
+          count_1hz = 0;
         }
+      }
+
+    }
+      
+    
+  }
+  else                  //返回值大于0代表父进程(主进程：控制进程)
+  {
+    p_addr = (uint8_t*)shmat(shmid, 0, 0);
+    std::cout << "father process! result = " << result << ", pid = " << getpid() << std::endl;
+    std::cout << (int)*p_addr << " | " << (int*)p_addr << std::endl;
+
+    while(1)
+    {
+      sleep(1);
+
+      if(*p_addr == TAKEOFF)
+      {
+        std::cout << " start to excute flight control command!  | Take Off !\n";
+        monitoredTakeoff(vehicle);
+        *p_addr = 0x00;
+      }
+
+      if(*p_addr == LANDING)
+      {
+        std::cout << " start to excute flight control command!  | Landing !\n";
+        monitoredLanding(vehicle);
+        *p_addr = 0x00;
       }
     }
 
-    if(voice_command_buff[2]==0x01 && voice_command_buff[3]==0x01)
-    {
-      cout << "Take Off !\n";
-      monitoredTakeoff(vehicle);
-    }
     
-    if(voice_command_buff[2]==0x01 && voice_command_buff[3]==0x02)
-    {
-      cout << "Land !\n";
-      monitoredLanding(vehicle);
-    }
   }
-  // Display interactive prompt
-  // std::cout
-  //   << "| Available commands:                                            |"
-  //   << std::endl;
-  // std::cout
-  //   << "| [a] Monitored Takeoff + Landing                                |"
-  //   << std::endl;
-  // std::cout
-  //   << "| [b] Monitored Takeoff + Position Control + Landing             |"
-  //   << std::endl;
-  // char inputChar;
-  // std::cin >> inputChar;
-
-  // switch (inputChar)
-  // {
-  //   case 'a':
-  //     monitoredTakeoff(vehicle);
-  //     monitoredLanding(vehicle);
-  //     break;
-  //   case 'b':
-  //     monitoredTakeoff(vehicle);
-  //     moveByPositionOffset(vehicle, 0, 6, 6, 30);
-  //     moveByPositionOffset(vehicle, 6, 0, -3, -30);
-  //     moveByPositionOffset(vehicle, -6, -6, 0, 0);
-  //     monitoredLanding(vehicle);
-  //     break;
-  //   default:
-  //     break;
-  // }
-
+  
   return 0;
 }
-
-
-
-
-// int main(void)
-// {
-//   const char* dev = (const char*) "/dev/ttyUSB0";
-//   //const char* file = (const char*) "/home/ubuntu/m100_framework/test.cpp";
-//   // uint32_t baudrate = 9600;
-//   uint8_t serial_read_buff[512];
-//   uint8_t voice_command_buff[VOICE_CMD_SIZE];
-
-//   LinuxSerialDevice dji_osdk_serial_device(dev,9600);
-//   dji_osdk_serial_device.init();
-//   if(dji_osdk_serial_device.getDeviceStatus() == false)
-//     return -1;
-
-//   while (1)
-//   {
-    
-//     uint8_t byte_count = dji_osdk_serial_device.readall(serial_read_buff, 512);
-
-//     // if(byte_count > 0)
-//     // {
-//     //   //int fd = open(file, O_RDWR);
-//     //   if(/**/(serial_read_buff[0]=0xFA)  &&  
-//     //       (serial_read_buff[1]=0xFB)   /*&&
-//     //       (serial_read_buff[2]=0x64)   &&
-//     //       (serial_read_buff[3]=0x00)   &&
-//     //       (serial_read_buff[4]=0x02) &&
-//     //       (serial_read_buff[5]=0xFD) */ )
-//     //       cout << "YES !\n";
-//     //   for (uint8_t i = 0; i < byte_count; i++)
-//     //   {
-//     //     /* code */
-//     //     //cout << hex << byte_count << hex << serial_read_buff[i] << endl;
-        
-//     //     //serial_write_buff[i] = serial_read_buff[i];
-//     //   }
-//     //   //write(fd, serial_write_buff, byte_count);
-//     //   //close(fd);
-//     // }
-
-//     if(byte_count == VOICE_CMD_SIZE)
-//     {
-//       uint8_t j=0;
-//       if(serial_read_buff[0]==0xFA && serial_read_buff[1]==0xFB)
-//       {
-//         for(j=0;j<VOICE_CMD_SIZE;j++)
-//         {
-//           voice_command_buff[j] = serial_read_buff[j];
-//         }
-
-//         //校验位计算
-//         voice_command_buff[4] = voice_command_buff[2] + voice_command_buff[3];
-
-//         //若校验不通过则清空缓冲区
-//         if(voice_command_buff[4] != serial_read_buff[4])
-//         {
-//           for(j=0;j<VOICE_CMD_SIZE;j++)
-//           {
-//             voice_command_buff[j] = 0;
-//           }
-//         }
-//       }
-//     }
-
-//     if(voice_command_buff[2]==0x01 && voice_command_buff[3]==0x01)
-//     {
-//       cout << "Take Off !\n";
-//     }
-    
-//     if(voice_command_buff[2]==0x01 && voice_command_buff[3]==0x02)
-//     {
-//       cout << "Land !\n";
-//     }
-//   }
-  
-
-
-// }
-
 
 
 
